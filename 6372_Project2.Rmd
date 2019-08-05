@@ -1,0 +1,443 @@
+---
+title: "DS 6372: Applied Statistics - Project 2"
+authors: 
+- Arnold Zhang <arnoldz@smu.edu>
+- Jeremy O. <jotsap@smu.edu>
+- Tej Tenmattam <ttenmattam@smu.edu>
+date: "03/23/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r echo=FALSE, message=FALSE}
+# Include Libraries
+library(tidyverse)
+library(caret)
+library(ggcorrplot)
+library(kernlab)
+library(ggplot2)
+```
+
+The following data set is a breast cancer data set that has numerous measurements taken from tumor biopsies.  The goal of using this data set is to predict using the metrics alone if the biopsy is cancer or not.  When continuous variables are available it is often helpful to create a pairs plot of data color coded by the response status (Diagnostis).  The first variable is an id number and is not needed.
+
+```{r echo=FALSE, message=FALSE}
+bc<-read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data",header=F,sep=",")
+names(bc)<- c('id_number', 'diagnosis', 'radius_mean', 
+              'texture_mean', 'perimeter_mean', 'area_mean', 
+              'smoothness_mean', 'compactness_mean', 
+              'concavity_mean','concave_points_mean', 
+              'symmetry_mean', 'fractal_dimension_mean',
+              'radius_se', 'texture_se', 'perimeter_se', 
+              'area_se', 'smoothness_se', 'compactness_se', 
+              'concavity_se', 'concave_points_se', 
+              'symmetry_se', 'fractal_dimension_se', 
+              'radius_worst', 'texture_worst', 
+              'perimeter_worst', 'area_worst', 
+              'smoothness_worst', 'compactness_worst', 
+              'concavity_worst', 'concave_points_worst', 
+              'symmetry_worst', 'fractal_dimension_worst')
+
+# Data Summary
+summary(bc)
+
+# Normalize Data
+bc.clean <- bc[,-c(1)]
+normalize <- function(x){
+  return (( x - min(x))/(max(x) -min(x)))
+}  
+bc.clean.normalized <- as.data.frame(
+  lapply(bc.clean[,2:31],normalize)
+)  
+bc.clean.normalized <- cbind(
+  bc.clean[,1],
+  bc.clean.normalized
+)
+names(bc.clean.normalized)[1] <- "diagnosis"
+
+summary(bc.clean.normalized)
+
+#Getting a look at the distribution
+table(bc$diagnosis)
+
+# Malignant and Benign Distribution
+m_and_b <- bc.clean %>% 
+  group_by(diagnosis) %>%
+  summarise(n = n()) %>%
+  mutate(percentage = signif((100 * n/sum(n)),2))
+
+ggplot(data = m_and_b) +
+  geom_bar(
+    mapping = aes(x = "",y = percentage, fill = diagnosis), 
+    stat = "identity", 
+    width = 1) +
+  geom_text(
+    mapping = aes(x = c(1,1), y = c(69,18), 
+                  label = paste(percentage,"%")), 
+    size = 3) +
+  coord_polar("y")
+```
+
+SCATTERPLOTS SHOWING CORRELATION
+```{r echo=FALSE, message=FALSE}
+#Scatter plots color coded by response for just the first few variables
+
+
+#size based correlation
+pairs(bc[,c(3,5,6,8)],col=bc$diagnosis)
+
+
+#Radius, Perimeter, Area - Mean vs Worst
+pairs(bc[,c(3, 5, 6, 23, 25, 26)],col=bc$diagnosis)
+
+#worst vs mean
+pairs( bc[,c(6, 26)], col=bc$diagnosis) 
+pairs( bc[,c(4, 24)], col=bc$diagnosis) 
+pairs( bc[,c(7, 27)], col=bc$diagnosis) 
+ 
+# concave & concave points
+pairs( bc[,c(9, 10, 29, 30)], col=bc$diagnosis) 
+
+```
+
+
+
+ADDING BOX PLOTS
+```{r echo=FALSE, message=FALSE}
+# ADDING BOX PLOT VISUALS
+
+
+# #Box Plot: Area Mean
+boxplot(area_mean ~ diagnosis,data=bc.clean,
+horizontal=TRUE,
+names=c("Benign","Malignant"),
+col=c("green","red"),
+xlab="Area Mean",
+main="Wisconsin Breast Cancer")
+ 
+#Box Plot: Radius Mean
+boxplot(radius_mean ~ diagnosis,data=bc.clean,
+horizontal=TRUE,
+names=c("Benign","Malignant"),
+col=c("green","red"),
+xlab="Radius Mean",
+main="Wisconsin Breast Cancer")
+
+```
+
+
+So we can see from this pairs plot of just the first few variables,  seperation between the cancer and non cancer groups are pretty well seperated. Unfortunately we may not always see clear seperations but that does not necesarily mean that something like LDA or some other predcictive tool won't work.  It could be due to the fact we cant see the seperation of the groups unless we can actually see in higher dimensions.  One way to still get at this, is to conduct a PCA analysis and provide a some scatterplots for the first few PC's.  If seperation exists in the PC's, then a predictive model will probably do well.  
+
+Below we will conduct PCA on all of the predictors and plot the first few PC's against each other and look for speration.  The number of PCs to explore can be dictated by the scree plot.
+
+```{r echo=FALSE, message=FALSE}
+pc.bc<-prcomp(bc[,-c(1,2)],scale.=TRUE)
+pc.bc.scores<-pc.bc$x
+
+#Adding the response column to the PC's data frame
+pc.bc.scores<-data.frame(pc.bc.scores)
+pc.bc.scores$Diagnosis<-bc$diagnosis
+
+#Use ggplot2 to plot the first few pc's
+library(ggplot2)
+ggplot(data = pc.bc.scores, aes(x = PC1, y = PC2)) +
+  geom_point(aes(col=Diagnosis), size=1)+
+  ggtitle("PCA of Breast Cancer Tumor Biopsies")
+
+ggplot(data = pc.bc.scores, aes(x = PC2, y = PC3)) +
+  geom_point(aes(col=Diagnosis), size=1)+
+  ggtitle("PCA of Breast Cancer Tumor Biopsies")
+```
+
+So we can see in the first graphic a clear seperation exists for the two cancer groups.  So the PCA is telling us in effect what we already know from looking at the original variables.  The power of this approach is that you only need to look at 2-4 graphs each time, versus potentially having to examine massive scatterplot matrices to see if anything is there or not!
+
+Given what we see in the PCA analysis, its not too suprising that an LDA will probably do a good job here in predicting the categorical responses.  Perform an LDA on the original set of variables and calculate a confusion matrix.  Note: For this problem you do not have to do a training and test set split, lets recognize that the prediction performance that we obtain is protentially biased too low due to overfitting.  The main point here is that the accuracy is pretty good as expected via the PCA look.
+
+```{r echo=FALSE, message=FALSE}
+library(MASS)
+# Perform LDA on diagnosis
+mylda <- lda(Diagnosis ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6, data = pc.bc.scores)
+
+#confusion matrix
+prd<-predict(mylda, newdata = pc.bc.scores)$class
+table(prd,pc.bc.scores$Diagnosis)
+```
+Seeing how a lot of the attributes are strongly correlated, we will use PCA to convert attributes into a set of uncorrelated components.
+
+Conduct PCA
+
+```{r echo=FALSE, message=FALSE}
+pca_wdbc <- princomp(bc.clean.normalized[,-c(1)]) # PCA on attributes
+pc_wdbc <- pca_wdbc$scores # PCA scores
+pc_wdbc_c <- bc$diagnosis # WDBC class attribute
+```
+Adding the response column to the PC's data frame
+```{r echo=FALSE, message=FALSE}
+full_wdbc <- data.frame(pc_wdbc,pc_wdbc_c) # Combining PC with class attribute
+```
+
+```{r}
+summary(pca_wdbc)
+library(factoextra)
+fviz_eig(pca_wdbc, addlabels = TRUE, ylim = c(0,100), barfill = "steelblue1", line="navy") + 
+  theme_classic() +
+  labs(x = "Principal Components", y = "% of Explained Variance", title = "WDBC - Principal Components")
+
+# We see that 53.1% of the variance is explained by the first principal component.
+```
+Model Creation:
+
+Models will be created using 5-fold cross-validation, given the relatively small sample size of the dataset. Setting parameters below:
+  
+Setting up 5-fold cross-validation:
+
+```{r echo=FALSE, message=FALSE}
+ctrl <- trainControl(method = "cv",
+                     number = 5)
+```
+
+Function for plotting confusion matrices
+```{r echo=FALSE, message=FALSE}
+cm_plot <- function(ml, title) {
+  confusionMatrix(ml)$table %>%
+    round(1) %>%
+    fourfoldplot(
+      color = c("#CC6666", "#99CC99"),
+      main=title, 
+      conf.level=0, 
+      margin=1
+    )
+}
+```
+#######################
+
+### NOTE ADDING A SEPARATE REGRESSION SECTION ###
+Not familiar w/ the code below but it looks like its using the **PCA components**, not the actual parameters. Remember for Objective 1 we need to provide an interpretation.
+
+Second, it does not account for the extremely high VIF scores. We went to Dr Turner's class today so we do need to account for that. Thus I added a separate Logistic Regression section for Objctive 1.
+
+Also I'm getting an warning when I run it "glm.fit: fitted probabilities numerically 0 or 1 occurred "
+
+NOTE: I also created a "bc.boolean" that replaced the M and B values with 1 and 0 respectively in order for glm() to work
+
+#bc.boolean[,2:32] -> bc.boolean
+
+LOGISTIC GLM: MAIN MODEL
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+bc.boolean <- read.csv("data/project2_wdbc.csv", header = T)
+main.glm <- glm(diagnosis ~ . , data=bc.clean, family = binomial(link = "logit"))
+summary(main.glm)
+
+```
+
+
+Notice the VIF scores are incredibly high since radius, perimeter, and area are all a function of each other
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# VIF for covariance between Radius, Perimeter, Area
+library(car)
+vif(main.glm) -> main.glm.vif
+main.glm.vif
+
+```
+
+LOGISTIC GLM: NORMALIZED DATA
+Note the same issue persists even after data has been normalized
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+main.norm.glm <- glm(diagnosis ~ . , data=bc.clean.normalized, family = binomial(link = "logit") , control = list(maxit = 50))
+summary(main.glm)
+
+```
+
+VIF scores remain uneffected by parameter Normalization
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# VIF for covariance between Radius, Perimeter, Area
+vif(main.norm.glm) 
+
+```
+
+
+LOGISTIC GLM: REDUCED MODEL
+
+Looking at the scatterplots above in the EDA section we can simplify the model based on the correlation we see
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# REDUCED model: 
+# only using "Area" in place of 'perimeter' and 'radius'
+# removing all "SE"" measurements, all "Worst""
+
+redux.glm <- glm(diagnosis ~ texture_mean + area_mean + smoothness_mean + compactness_mean + concavity_mean + concave_points_mean + symmetry_mean + fractal_dimension_mean , data=bc.clean, family = binomial(link = "logit") )
+summary(redux.glm)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# VIF for covariance between Radius, Perimeter, Area
+vif(redux.glm) -> redux.glm.vif
+redux.glm.vif
+```
+
+NOTE: R will display a warning message about GLM since all response probabilities are 0 or 1
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#95% CONFIDENCE INTERVALS 
+confint(redux.glm, level = 0.95)
+
+```
+
+ROC CURVE FOR LOGISTIC REGRESSION
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#ROC CURVE TO ASSESS
+
+library(ROCR)
+bc_lasso_pred <- predict(redux.glm, newx = bc.clean, type = "response")
+bc.lasso.pred <- prediction(bc_lasso_pred, bc.clean$diagnosis)
+bc.lasso.perf <- performance(bc.lasso.pred, measure = "prec", x.measure = "rec")
+
+plot(bc.lasso.perf)
+```
+
+
+
+PLOTTING LOGISTIC REGRESSION REDUX MODEL
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+library(popbio)
+logi.hist.plot(bc.clean$radius_mean, bc.boolean$diag_bool, boxp = F, type = "hist")
+
+```
+
+
+
+
+LOGISTIC GLM: REDUCED + INTERACTIONS
+For Objective 2 we will try interactions on the reduced model and see how this effects the AIC score as well as the VIF values
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Adding Interactions to REDUCED model
+redux_inter.glm <- glm(diagnosis ~ texture_mean * area_mean * smoothness_mean * compactness_mean * concavity_mean * concave_points_mean * symmetry_mean * fractal_dimension_mean , data=bc.clean, family = binomial(link = "logit") , control = list(maxit = 50))
+
+#Note: you can use this command below to see JUST THE AIC SCORE since output is quite large
+redux_inter.glm$aic
+
+#output the coefficients 
+summary(redux_inter.glm)$coefficients
+
+```
+
+AIC STEPWISE FEATURE SELECTION
+Note guys I really REALLY struggled w/ this. The final output is more like the PCA. 
+Has an AIC of 50 but looking at the model it produces and the coefficients, it really looks like its overfitting
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#MAIN MODEL STEP SELECTION
+library(MASS)
+main.glm.step <- stepAIC( main.glm, trace = 1, family = binomial(link = "logit"), direction = "both", test="Chisq") 
+
+#Model results
+summary(main.glm.step)
+
+# I'm not sure how useful these plots are or how to even interpret them
+plot(main.glm.step)
+```
+
+
+LASSO GLMNET
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(glmnet)
+
+#NOTE: GLMNET requires dataframe to be converted to matrix
+bc_lasso_mat <- model.matrix(diagnosis ~ ., bc.clean)[,-1]
+bc.lasso.glm <- glmnet(bc_lasso_mat, bc.clean$diagnosis, family = "binomial" )
+bc.lasso.cv <- cv.glmnet(bc_lasso_mat, bc.clean$diagnosis, family = "binomial")
+
+bc_lambda_lasso <- bc.lasso.cv$lambda.min
+bc_lambda_lasso
+```
+
+Output the final coefficients from GLMNET LASSO
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+predict(bc.lasso.cv, type = "coefficients", s = bc_lambda_lasso )
+```
+
+
+
+
+
+####################################
+
+Logistic Regression for Objective 2 - Using PC's instead of original parameters
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+logit.ml <- train(pc_wdbc_c~., full_wdbc, method = "glm", family = "binomial", trControl =ctrl)
+logit.cm <- confusionMatrix(logit.ml)
+cm_plot(logit.ml, "Logistic Regression")
+logit.metrics <- data.frame (
+  "Model" = "Logistic Regression",
+  "Accuracy" = (logit.cm$table[1,1] + logit.cm$table[2,2])/100,
+  "Recall" = logit.cm$table[2,2] / (logit.cm$table[2,2] + logit.cm$table[1,2]),
+  "Precision" = logit.cm$table[2,2] / (logit.cm$table[2,1] + logit.cm$table[2,2]),
+  "FNR" = (logit.cm$table[1,2] / (logit.cm$table[2,2] + logit.cm$table[1,2])),
+  "Fscore" = (2 * logit.cm$table[2,2]) / (2 * logit.cm$table[2,2] + logit.cm$table[1,2] + logit.cm$table[2,1])
+)
+logit.metrics
+```
+
+k-Nearest Neighbours:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knn.ml <- train(pc_wdbc_c~., full_wdbc, method = "knn", trControl =ctrl)
+knn.cm <- confusionMatrix(knn.ml)
+cm_plot(knn.ml, "kNN")
+knn.metrics <- data.frame (
+  "Model" = "k-NN",
+  "Accuracy" = (knn.cm$table[1,1] + knn.cm$table[2,2])/100,
+  "Recall" = knn.cm$table[2,2] / (knn.cm$table[2,2] + knn.cm$table[1,2]),
+  "Precision" = knn.cm$table[2,2] / (knn.cm$table[2,1] + knn.cm$table[2,2]),
+  "FNR" = (knn.cm$table[1,2] / (knn.cm$table[2,2] + knn.cm$table[1,2])),
+  "Fscore" = (2 * knn.cm$table[2,2]) / (2 * knn.cm$table[2,2] + knn.cm$table[1,2] + knn.cm$table[2,1])
+)
+knn.metrics
+```
+
+Random Forest:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+rf.ml <- train(pc_wdbc_c~., full_wdbc, method = "rf", trControl =ctrl)
+rf.cm <- confusionMatrix(rf.ml)
+cm_plot(rf.ml, "Random Forest")
+rf.metrics <- data.frame (
+  "Model" = "Random Forest",
+  "Accuracy" = (rf.cm$table[1,1] + rf.cm$table[2,2])/100,
+  "Recall" = rf.cm$table[2,2] / (rf.cm$table[2,2] + rf.cm$table[1,2]),
+  "Precision" = rf.cm$table[2,2] / (rf.cm$table[2,1] + rf.cm$table[2,2]),
+  "FNR" = (rf.cm$table[1,2] / (rf.cm$table[2,2] + rf.cm$table[1,2])),
+  "Fscore" = (2 * rf.cm$table[2,2]) / (2 * rf.cm$table[2,2] + rf.cm$table[1,2] + rf.cm$table[2,1])
+)
+rf.metrics
+```
+
+Model Performance - Confusion Matrices: 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Take a look at all confusion matrices:
+par(mfrow=c(1,3))
+cm_plot(knn.ml, "k-NN")
+cm_plot(logit.ml, "Logistic Regression")
+cm_plot(rf.ml, "Random Forest")
+```
+
+Model Performance - Metrics: 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+metrics1 <- rbind(knn.metrics,logit.metrics, rf.metrics)
+metrics1 # Taking a look at everything together
+
+ggplot(metrics1, aes(Model, Accuracy)) + geom_bar(stat="identity", aes(fill=Model)) + coord_cartesian(ylim=c(0.9,1)) + ggtitle("Accuracy")
+ggplot(metrics1, aes(Model, Recall)) + geom_bar(stat="identity", aes(fill=Model)) + coord_cartesian(ylim=c(0.9,1)) + ggtitle("Recall")
+ggplot(metrics1, aes(Model, Precision)) + geom_bar(stat="identity", aes(fill=Model)) + coord_cartesian(ylim=c(0.8,1)) + ggtitle("Precision")
+ggplot(metrics1, aes(Model, FNR)) + geom_bar(stat="identity", aes(fill=Model)) + coord_cartesian(ylim=c(0,0.05)) + ggtitle("False Negative Rate")
+ggplot(metrics1, aes(Model, Fscore)) + geom_bar(stat="identity", aes(fill=Model)) + coord_cartesian(ylim=c(0.9,1)) + ggtitle("F score")
+```
+
